@@ -58,8 +58,9 @@ See [`references/lifecycle.md`](skills/rail0-payments/references/lifecycle.md) f
 
 - [`SKILL.md`](skills/rail0-payments/SKILL.md) — the skill: mental model, setup, per-operation recipes, error handling, safety
 - [`references/`](skills/rail0-payments/references/) — lifecycle/state-machine + the full command reference
-- [`scripts/`](skills/rail0-payments/scripts/) — `wait_for_status.sh`, the poller the skill uses between on-chain steps
 - [`evals/`](skills/rail0-payments/evals/) — the test prompts used to validate the skill (4/4 passing end-to-end on Arc testnet)
+
+> The status poller is inlined in `SKILL.md` (the `wait_for` function), so the skill needs nothing bundled to run.
 
 ## Security
 
@@ -67,7 +68,7 @@ Private keys stay local. The CLI signs locally and sends only **signatures and
 signed transactions** to the gateway — never the key. Prefer the OS keychain
 (`rail0 keys add` → `@name`) or a secrets-manager-injected `RAIL0_PRIVATE_KEY`;
 never paste a raw key inline. See the skill's *"Signing keys — reference them,
-never embed them"* section.
+never embed them"* section, and [`SECURITY.md`](SECURITY.md) for the full trust model.
 
 ## License
 

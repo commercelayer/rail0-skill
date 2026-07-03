@@ -108,8 +108,8 @@ below — it returns as soon as the status matches, and surfaces a failed broadc
 instead of hanging:
 
 ```sh
-# wait_for <id> <expected-status> [timeout-secs]; needs jq. (The repo also ships
-# this as scripts/wait_for_status.sh, but this inline version needs nothing bundled.)
+# wait_for <id> <expected-status> [timeout-secs]; needs jq. Self-contained — paste
+# it once and reuse it in the recipes below.
 wait_for() {
   local id=$1 want=$2 t=${3:-120} s j
   for ((i=0; i<t; i+=2)); do
