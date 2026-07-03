@@ -253,7 +253,6 @@ assumptions — see the **Lifecycle & guards** table above.
 
 This SKILL.md is self-contained — the recipes and the **Lifecycle & guards** table
 cover every operation. For exhaustive flags/defaults, run `rail0 <command> --help`,
-or see [`references/commands.md`](references/commands.md) and
-[`references/lifecycle.md`](references/lifecycle.md) in the skill repo
-([commercelayer/rail0-skill](https://github.com/commercelayer/rail0-skill)) when
-those bundled files are present.
+or see the bundled references (present next to this file when installed):
+[`references/commands.md`](https://github.com/commercelayer/rail0-skill/blob/main/skills/rail0-payments/references/commands.md)
+and [`references/lifecycle.md`](https://github.com/commercelayer/rail0-skill/blob/main/skills/rail0-payments/references/lifecycle.md).
