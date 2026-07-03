@@ -1,0 +1,59 @@
+{
+  "skill_name": "rail0-payments",
+  "notes": "Real Arc-testnet (chain 5042002) end-to-end runs. Payer @payer = 0xe3DD5ea618F74De4C95B0ff0EbF9921A06a694c4, Payee @payee = 0x2D2B3d4E72370A7256633D426518a372a53557D5. Small USDC amounts to conserve test funds. Requires: local gateway (bin/dev) + indexer confirming on Arc + funded keys. Set RAIL0_BASE_URL=http://localhost:9292.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "authorize-then-partial-capture",
+      "prompt": "Using the rail0 CLI against the local gateway (RAIL0_BASE_URL=http://localhost:9292, Arc testnet chain 5042002), take a 0.10 USDC payment from @payer to @payee as an authorization hold, then capture 0.04 USDC now and the remaining 0.06 USDC after. Sign with the keychain keys @payer and @payee. Report the rail0_id and the final status.",
+      "expected_output": "A payment created (authorize mode), authorized, then two captures (0.04 then 0.06) leaving it 'captured'. Correct signer per step (payer creates, payee authorizes+captures). rail0_id reported.",
+      "files": [],
+      "assertions": [
+        "Final payment status is 'captured'",
+        "Final capturable_amount is 0",
+        "At least two capture transactions confirmed (partial 0.04 then 0.06)",
+        "Payer key (@payer) used for create; payee key (@payee) used for authorize and capture",
+        "A rail0_id (0x + 64 hex) is reported to the user"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "charge-one-shot",
+      "prompt": "Charge 0.05 USDC immediately from buyer @payer to merchant @payee over rail0 on Arc testnet (local gateway at http://localhost:9292, chain 5042002) — no escrow. Use the @payer and @payee keychain keys. Tell me the rail0_id and confirm it reached 'charged'.",
+      "expected_output": "A payment created with mode=charge, then charged, ending in status 'charged'. rail0_id reported.",
+      "files": [],
+      "assertions": [
+        "Payment created with mode=charge",
+        "Final payment status is 'charged'",
+        "A confirmed charge transaction exists",
+        "No separate authorize/capture step was used (charge is one-shot)"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "void-before-capture",
+      "prompt": "On the rail0 local gateway (http://localhost:9292, Arc testnet 5042002), authorize a 0.10 USDC hold from @payer to @payee, then the order is cancelled before capturing anything — void it so the buyer gets the full amount back. Sign with @payer / @payee from the keychain. Confirm the final status.",
+      "expected_output": "Payment created + authorized, then voided (no capture in between), ending in status 'voided'. Uses payee key for void.",
+      "files": [],
+      "assertions": [
+        "Final payment status is 'voided'",
+        "No capture occurred before the void",
+        "A confirmed void transaction exists",
+        "Void signed with the payee key (@payee)"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "refund-after-charge",
+      "prompt": "Over rail0 on Arc testnet (local gateway http://localhost:9292, chain 5042002), charge 0.06 USDC from @payer to @payee, then the buyer returns part of the order — refund 0.02 USDC back to them. Use the @payer/@payee keychain keys. Report the rail0_id, the refundable amount left, and the status.",
+      "expected_output": "Payment charged, then a partial refund of 0.02 (payee-signed). Status stays 'charged' (partial refund doesn't change status); refundable_amount reduced by 0.02.",
+      "files": [],
+      "assertions": [
+        "Payment charged (mode=charge)",
+        "A partial refund of 0.02 USDC was submitted and confirmed on-chain",
+        "refundable_amount decreased by 0.02 (base units 60000 -> 40000)",
+        "Refund signed with the payee key (@payee)"
+      ]
+    }
+  ]
+}
