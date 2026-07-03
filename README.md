@@ -1,14 +1,15 @@
 # rail0-skill
 
-[![Claude Agent Skill](https://img.shields.io/badge/Claude-Agent_Skill-8A2BE2)](https://docs.claude.com/en/docs/agents-and-tools/agent-skills)
+[![Claude Agent Skill](https://img.shields.io/badge/Claude-Agent_Skill-8A2BE2)](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview)
 [![Install via skills.sh](https://img.shields.io/badge/skills.sh-npx_skills_add-111827)](https://skills.sh)
 [![rail0](https://img.shields.io/badge/rail0-gateway-00A3FF)](https://rail0.xyz)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 > Make and manage **stablecoin (USDC) payments** over the [rail0](https://rail0.xyz)
 > gateway from an AI agent — the full **authorize → capture** lifecycle plus
 > charge, void, release, refund, and dispute — driven by the `rail0` CLI.
 
-A [Claude Agent Skill](https://docs.claude.com/en/docs/agents-and-tools/agent-skills).
+A [Claude Agent Skill](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview).
 Point your agent at a rail0 gateway and it can take, capture, refund, or cancel
 stablecoin payments *correctly*: the skill encodes the lifecycle rules, who signs
 what, and the asynchronous **act → poll** pattern so operations never race the chain.
@@ -67,3 +68,7 @@ signed transactions** to the gateway — never the key. Prefer the OS keychain
 (`rail0 keys add` → `@name`) or a secrets-manager-injected `RAIL0_PRIVATE_KEY`;
 never paste a raw key inline. See the skill's *"Signing keys — reference them,
 never embed them"* section.
+
+## License
+
+MIT © Commerce Layer — see [LICENSE](LICENSE).
