@@ -242,12 +242,24 @@ assumptions — see the **Lifecycle & guards** table above.
 - **Timeouts** — confirmation is a few seconds on testnet but can lag; widen the
   poll timeout rather than assuming failure, and confirm with `payments get`.
 
-## Safety
+## Safety — you are moving real money
 
-- Never print, log, or transmit a private key. Pass it via `@name`/env, not inline.
-- Captures, charges, and refunds move **real funds** (real value on mainnet, test
-  funds on a testnet). On mainnet, confirm the amount, token, chain, and
-  payer/payee with the user before broadcasting an irreversible operation.
+This skill has **direct money-movement capability**: `authorize`/`capture`/`charge`
+pull funds from the payer, `refund`/`void`/`release` return them, and every
+operation broadcasts an **irreversible** on-chain transaction. Treat it with a
+human in the loop:
+
+- **Confirm before every fund-moving broadcast.** Before `authorize`, `capture`,
+  `charge`, or `refund`, restate the **amount, token, chain, and payer/payee** back
+  to the user and get explicit approval. Never broadcast a fund-moving operation the
+  user did not ask for, and never invent amounts or parties. Mandatory on mainnet;
+  on a testnet use judgment.
+- **Prefer a testnet** while developing, or whenever the parameters are uncertain.
+- **On-chain is final** — there is no undo once a transaction confirms. Double-check
+  the amount is within `capturable_amount` / `refundable_amount` first.
+- **Never** print, log, or transmit a private key; pass it via `@name`/env, never
+  inline (see *Signing keys*). Only signatures and signed transactions go to the
+  gateway — never the key.
 
 ## Command reference
 

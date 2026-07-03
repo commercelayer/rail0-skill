@@ -28,11 +28,24 @@ skill does **not** fetch or execute remote code, and bundles no install scripts;
 the only shell it uses is the small inline `wait_for` polling function shown in
 `SKILL.md`, which just calls `rail0 payments get` in a loop.
 
-## Funds move on-chain
+## Capability: direct money access (by design)
 
-`capture`, `charge`, and `refund` move real value on mainnet (test funds on a
-testnet). For mainnet, the skill instructs confirming the amount, token, chain,
-and payer/payee with the user before broadcasting an irreversible operation.
+Security scanners flag this skill for **direct money-access capability** (e.g.
+`W009`, MEDIUM). That is correct and expected: moving stablecoins *is* the skill's
+purpose — `authorize`/`capture`/`charge` pull funds from the payer, `refund`/`void`/
+`release` return them, and every operation broadcasts an **irreversible** on-chain
+transaction. It is a capability disclosure, not a vulnerability. The finding cannot
+be removed without removing the skill's function; instead it is **mitigated**:
+
+- **Human in the loop.** The skill instructs the agent to restate the amount,
+  token, chain, and payer/payee and get **explicit user approval before every
+  fund-moving broadcast** — never broadcasting an operation the user didn't ask for
+  (mandatory on mainnet). See the *Safety* section of `SKILL.md`.
+- **Keys stay local** (above) — the capability is exercised only with a key the
+  operator supplies on their own machine; the skill can't move funds on its own.
+- **Testnet-first** guidance while developing or when parameters are uncertain.
+- **Amount ceilings** — captures/refunds are bounded by the on-chain
+  `capturable_amount` / `refundable_amount`, re-read before acting.
 
 ## Reporting
 
