@@ -46,7 +46,7 @@ rail0 payments capture   "$PID" -a 10.00 -p @payee
 | **refund** | payee | return captured funds to the buyer (partial or full) |
 | **dispute / close** | payer | buyer signal — no funds move |
 
-See [`references/lifecycle.md`](references/lifecycle.md) for the state machine, guards, and the two on-chain balances that drive the next legal step.
+See [`references/lifecycle.md`](skills/rail0-payments/references/lifecycle.md) for the state machine, guards, and the two on-chain balances that drive the next legal step.
 
 ## Requirements
 
@@ -56,10 +56,10 @@ See [`references/lifecycle.md`](references/lifecycle.md) for the state machine, 
 
 ## What's inside
 
-- [`SKILL.md`](SKILL.md) — the skill: mental model, setup, per-operation recipes, error handling, safety
-- [`references/`](references/) — lifecycle/state-machine + the full command reference
-- [`scripts/`](scripts/) — `wait_for_status.sh`, the poller the skill uses between on-chain steps
-- [`evals/`](evals/) — the test prompts used to validate the skill (4/4 passing end-to-end on Arc testnet)
+- [`SKILL.md`](skills/rail0-payments/SKILL.md) — the skill: mental model, setup, per-operation recipes, error handling, safety
+- [`references/`](skills/rail0-payments/references/) — lifecycle/state-machine + the full command reference
+- [`scripts/`](skills/rail0-payments/scripts/) — `wait_for_status.sh`, the poller the skill uses between on-chain steps
+- [`evals/`](skills/rail0-payments/evals/) — the test prompts used to validate the skill (4/4 passing end-to-end on Arc testnet)
 
 ## Security
 
