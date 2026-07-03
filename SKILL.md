@@ -36,8 +36,29 @@ after broadcasting; the on-chain result lands a few seconds later and the paymen
 
 Who signs what, which operation is legal from which state, and the exact status
 semantics (e.g. `void` is only allowed before any capture; `refund` closes as
-`refunded` only when fully settled) are important and easy to get wrong — read
-[references/lifecycle.md](references/lifecycle.md) before composing a flow.
+`refunded` only when fully settled) are important and easy to get wrong — see
+**Lifecycle & guards** below before composing a flow.
+
+## Lifecycle & guards
+
+States: `unsigned → signed → authorized | charged → captured | partially_captured`,
+plus the closed states `voided`, `released`, `refunded`. (`partially_refunded` is
+legacy on older gateways — a partial refund no longer changes status.) Two on-chain
+balances decide what's legal next: **`capturable_amount`** (escrow, set by
+authorize) and **`refundable_amount`** (payee-held, set by capture/charge).
+
+| Op | Signer | Legal when | Outcome |
+|----|--------|-----------|---------|
+| authorize | payee | from `signed` | escrow funded → `authorized` |
+| charge | payee | from `signed`, `mode=charge` | funds to payee → `charged` |
+| capture | payee | `capturable_amount > 0`, before `authorization_expiry` | drains escrow → `captured`, else `partially_captured` |
+| void | payee | nothing captured yet (`capturable_amount == amount`) | full escrow returned → `voided`; after any capture it reverts `AlreadyCaptured` |
+| release | payer or payee | after `authorization_expiry`, `capturable_amount > 0` | uncaptured escrow returned; `released` only on a total release (untouched auth), else status unchanged |
+| refund | payee | `refundable_amount > 0`, before `refund_expiry` | funds returned; `refunded` only when fully settled, else status unchanged |
+| dispute / close | payer | `refundable_amount > 0`, within refund window | signal only — no funds move |
+
+Always choose the next op from the **current status and these two balances** (read
+from `payments get --json`), never from assumptions.
 
 ## Setup
 
@@ -81,19 +102,33 @@ semantics (e.g. `void` is only allowed before any capture; `refund` closes as
 ## The core pattern: act, then poll
 
 Every lifecycle command is atomic (prepare + sign + broadcast). After it returns,
-poll until the payment reaches the expected status. Use the bundled poller so you
-don't reinvent the loop and so a failed transaction surfaces cleanly instead of
-hanging:
+poll `payments get` until the payment reaches the expected status, so you don't
+race the chain. Define this `wait_for` helper once and reuse it in the recipes
+below — it returns as soon as the status matches, and surfaces a failed broadcast
+instead of hanging:
 
 ```sh
-scripts/wait_for_status.sh <rail0_id_or_uuid> <expected-status> [timeout-secs]
+# wait_for <id> <expected-status> [timeout-secs]; needs jq. (The repo also ships
+# this as scripts/wait_for_status.sh, but this inline version needs nothing bundled.)
+wait_for() {
+  local id=$1 want=$2 t=${3:-120} s j
+  for ((i=0; i<t; i+=2)); do
+    j=$(rail0 payments get "$id" --json 2>/dev/null)
+    s=$(jq -r '.status // empty' <<<"$j")
+    [ "$s" = "$want" ] && { echo "✓ $id → $s"; return 0; }
+    if [ "$(jq -r '(.transactions // []) | last | .status // empty' <<<"$j")" = failed ]; then
+      echo "✗ $id: last tx failed — $(jq -r '(.transactions // []) | last | (.error_message // .error_reason // .error_code // "reverted")' <<<"$j")" >&2
+      return 1
+    fi
+    sleep 2
+  done
+  echo "✗ $id: timed out waiting for '$want' (now: ${s:-unknown})" >&2; return 1
+}
 ```
 
-It polls `rail0 payments get --json`, returns 0 when `status` matches, and returns
-non-zero (printing the on-chain error) if a transaction for the payment fails or
-the timeout elapses. Always machine-read with `--json` (never scrape the pretty
-output) and extract fields with `jq`, e.g. `jq -r .rail0_id`, `.status`,
-`.capturable_amount`, `.refundable_amount`.
+Always machine-read with `--json` (never scrape the pretty output) and extract
+fields with `jq`, e.g. `jq -r .id`, `.rail0_id`, `.status`, `.capturable_amount`,
+`.refundable_amount`.
 
 Capture the payment's **UUID `id`** from the `create` output and reuse it as the
 handle for every later command — it addresses the payment with or without a
@@ -118,13 +153,13 @@ PID=$(rail0 payments create \
 
 # 2) Payee authorizes → funds into escrow; wait until it lands
 rail0 payments authorize "$PID" -p @payee
-scripts/wait_for_status.sh "$PID" authorized
+wait_for "$PID" authorized
 
 # 3) Payee captures — full, or partial (repeat for the rest)
 rail0 payments capture "$PID" -a 4.00 -p @payee
-scripts/wait_for_status.sh "$PID" partially_captured   # 6.00 still in escrow
+wait_for "$PID" partially_captured   # 6.00 still in escrow
 rail0 payments capture "$PID" -a 6.00 -p @payee
-scripts/wait_for_status.sh "$PID" captured
+wait_for "$PID" captured
 ```
 
 A capture that drains the escrow lands in `captured`; one that leaves a balance
@@ -137,7 +172,7 @@ PID=$(rail0 payments create \
   -F <payer_addr> -T <payee_addr> -t USDC -a 10.00 -c 5042002 -m charge \
   -p @payer --json | jq -r .id)
 rail0 payments charge "$PID" -p @payee
-scripts/wait_for_status.sh "$PID" charged
+wait_for "$PID" charged
 ```
 
 ### Void — cancel an untouched authorization
@@ -148,7 +183,7 @@ capture). Returns the full escrow to the payer.
 
 ```sh
 rail0 payments void "$PID" -p @payee
-scripts/wait_for_status.sh "$PID" voided
+wait_for "$PID" voided
 ```
 
 ### Release — return the uncaptured escrow after expiry
@@ -171,7 +206,7 @@ leaves the status unchanged.
 
 ```sh
 rail0 payments refund "$PID" -a 3.00 -p @payee
-scripts/wait_for_status.sh "$PID" refunded   # only if this fully settles it
+wait_for "$PID" refunded   # only if this fully settles it
 ```
 
 ### Dispute / close dispute
@@ -192,8 +227,7 @@ rail0 payments dispute close "$PID" -p @payer
 - `rail0 payments list` / `payments history <id>` — need `auth login`.
 
 Decide the next legal operation from the **balances and status**, not from
-assumptions — see the state/guard table in
-[references/lifecycle.md](references/lifecycle.md).
+assumptions — see the **Lifecycle & guards** table above.
 
 ## Handling failures
 
@@ -202,9 +236,9 @@ assumptions — see the state/guard table in
   residual → `amount_exceeds_capturable`/`amount_exceeds_refundable`). Re-read
   `payments get` and pick a legal op; don't retry blindly.
 - **A broadcast that reverts on-chain** — the transaction lands `failed` with a
-  decoded error; the payment stays in its prior state. `wait_for_status.sh`
-  surfaces this instead of spinning. Read `payments transactions <id>` for the
-  reason before retrying.
+  decoded error; the payment stays in its prior state. `wait_for` surfaces this
+  instead of spinning. Read `payments transactions <id>` for the reason before
+  retrying.
 - **Timeouts** — confirmation is a few seconds on testnet but can lag; widen the
   poll timeout rather than assuming failure, and confirm with `payments get`.
 
@@ -215,7 +249,11 @@ assumptions — see the state/guard table in
   funds on a testnet). On mainnet, confirm the amount, token, chain, and
   payer/payee with the user before broadcasting an irreversible operation.
 
-## Full command reference
+## Command reference
 
-Exact flags, arguments, and defaults for every command:
-[references/commands.md](references/commands.md).
+This SKILL.md is self-contained — the recipes and the **Lifecycle & guards** table
+cover every operation. For exhaustive flags/defaults, run `rail0 <command> --help`,
+or see [`references/commands.md`](references/commands.md) and
+[`references/lifecycle.md`](references/lifecycle.md) in the skill repo
+([commercelayer/rail0-skill](https://github.com/commercelayer/rail0-skill)) when
+those bundled files are present.
