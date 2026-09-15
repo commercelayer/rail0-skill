@@ -50,12 +50,16 @@ authorize) and **`refundable_amount`** (payee-held, set by capture/charge).
 | Op | Signer | Legal when | Outcome |
 |----|--------|-----------|---------|
 | authorize | payee | from `signed` | escrow funded → `authorized` |
-| charge | payee | from `signed`, `mode=charge` | funds to payee → `charged` |
+| charge | payee | from `signed`, created with `-C` | funds to payee → `charged` |
 | capture | payee | `capturable_amount > 0`, before `authorization_expiry` | drains escrow → `captured`, else `partially_captured` |
 | void | payee | nothing captured yet (`capturable_amount == amount`) | full escrow returned → `voided`; after any capture it reverts `AlreadyCaptured` |
 | release | payer or payee | after `authorization_expiry`, `capturable_amount > 0` | uncaptured escrow returned; `released` only on a total release (untouched auth), else status unchanged |
 | refund | payee | `refundable_amount > 0`, before `refund_expiry` | funds returned; `refunded` only when fully settled, else status unchanged |
 | dispute / close | payer | `refundable_amount > 0`, within refund window | signal only — no funds move |
+
+> A **full** refund auto-closes an open dispute. Calling `dispute close` afterwards
+> fails with `there is no open dispute to close` — check `disputed` on the payment
+> before assuming you still have to close it.
 
 Always choose the next op from the **current status and these two balances** (read
 from `payments get --json`), never from assumptions.
@@ -99,36 +103,54 @@ from `payments get --json`), never from assumptions.
    despite a healthy-looking status. On a surprising `401 not authorized`, just log
    in again against the gateway you're targeting.
 
-## The core pattern: act, then poll
+## The core pattern: act with `--wait`, and confirm with `--yes`
 
-Every lifecycle command is atomic (prepare + sign + broadcast). After it returns,
-poll `payments get` until the payment reaches the expected status, so you don't
-race the chain. Define this `wait_for` helper once and reuse it in the recipes
-below — it returns as soon as the status matches, and surfaces a failed broadcast
-instead of hanging:
+Two flags decide whether a scripted flow works at all. Neither is optional for an
+agent.
+
+**`--yes` is REQUIRED in a non-interactive shell.** Every fund-moving command —
+`capture`, `charge`, `refund`, `void`, `release`, `dispute` (and `dispute close`) —
+asks for confirmation, and without a TTY it refuses outright:
+
+```
+Error: refusing to run without confirmation in a non-interactive shell; pass --yes to proceed
+```
+
+`create`, `authorize` and `sign` do **not** take `--yes`; passing it is an
+`unknown flag` error. So: confirm the parameters with the human (see *Safety*),
+then pass `--yes` on the six commands that require it.
+
+**`-w`/`--wait` blocks until the operation confirms on-chain**, and every lifecycle
+command has it. The gateway is asynchronous — a command returns after broadcasting
+and the status advances seconds later — so without `-w` you are racing the chain
+and the very next command fails with a `422` for a state that has not arrived yet.
 
 ```sh
-# wait_for <id> <expected-status> [timeout-secs]; needs jq. Self-contained — paste
-# it once and reuse it in the recipes below.
-wait_for() {
-  local id=$1 want=$2 t=${3:-120} s j
-  for ((i=0; i<t; i+=2)); do
-    j=$(rail0 payments get "$id" --json 2>/dev/null)
-    s=$(jq -r '.status // empty' <<<"$j")
-    [ "$s" = "$want" ] && { echo "✓ $id → $s"; return 0; }
-    if [ "$(jq -r '(.transactions // []) | last | .status // empty' <<<"$j")" = failed ]; then
-      echo "✗ $id: last tx failed — $(jq -r '(.transactions // []) | last | (.error_message // .error_reason // .error_code // "reverted")' <<<"$j")" >&2
-      return 1
-    fi
-    sleep 2
-  done
-  echo "✗ $id: timed out waiting for '$want' (now: ${s:-unknown})" >&2; return 1
-}
+rail0 payments capture "$PID" -a 4.00 --yes -w   # returns once confirmed, or fails
 ```
+
+`--timeout` (default **15m**) bounds the wait and is sized for the slowest chain's
+finality: a 60-confirmation chain like Base Sepolia takes minutes, not seconds.
+
+When you need to wait on a payment you did not just act on — or wait for a status
+rather than one operation — use the built-in:
+
+```sh
+rail0 payments wait "$PID"                     # until nothing is in flight
+rail0 payments wait "$PID" --until captured    # until a specific status
+```
+
+Do **not** hand-roll a polling loop. `-w` and `payments wait` already handle the
+confirmed/failed/timeout cases, and a bash helper in this file is worse than
+useless: a `$1`/`$2` inside it is substituted with the skill's own invocation
+arguments when the skill is called with any, so the helper silently ignores its
+parameters.
 
 Always machine-read with `--json` (never scrape the pretty output) and extract
 fields with `jq`, e.g. `jq -r .id`, `.rail0_id`, `.status`, `.capturable_amount`,
-`.refundable_amount`.
+`.refundable_amount`. Note the CLI may print a line before the JSON body (e.g.
+`Signed in as 0x…`), so parse from the first `{` rather than feeding the whole
+stream to `jq`.
 
 Capture the payment's **UUID `id`** from the `create` output and reuse it as the
 handle for every later command — it addresses the payment with or without a
@@ -151,15 +173,14 @@ PID=$(rail0 payments create \
   -F <payer_addr> -T <payee_addr> -t USDC -a 10.00 -c 5042002 \
   -p @payer --json | jq -r .id)
 
-# 2) Payee authorizes → funds into escrow; wait until it lands
-rail0 payments authorize "$PID" -p @payee
-wait_for "$PID" authorized
+# 2) Payee authorizes → funds into escrow. -w blocks until it confirms.
+#    authorize takes NO --yes (passing it is an unknown-flag error).
+rail0 payments authorize "$PID" -p @payee -w
 
-# 3) Payee captures — full, or partial (repeat for the rest)
-rail0 payments capture "$PID" -a 4.00 -p @payee
-wait_for "$PID" partially_captured   # 6.00 still in escrow
-rail0 payments capture "$PID" -a 6.00 -p @payee
-wait_for "$PID" captured
+# 3) Payee captures — full, or partial (repeat for the rest).
+#    capture REQUIRES --yes in a non-interactive shell.
+rail0 payments capture "$PID" -a 4.00 -p @payee --yes -w   # → partially_captured
+rail0 payments capture "$PID" -a 6.00 -p @payee --yes -w   # → captured
 ```
 
 A capture that drains the escrow lands in `captured`; one that leaves a balance
@@ -169,10 +190,9 @@ lands in `partially_captured`. Never capture more than `capturable_amount`.
 
 ```sh
 PID=$(rail0 payments create \
-  -F <payer_addr> -T <payee_addr> -t USDC -a 10.00 -c 5042002 -m charge \
+  -F <payer_addr> -T <payee_addr> -t USDC -a 10.00 -c 5042002 -C \
   -p @payer --json | jq -r .id)
-rail0 payments charge "$PID" -p @payee
-wait_for "$PID" charged
+rail0 payments charge "$PID" -p @payee --yes -w
 ```
 
 ### Void — cancel an untouched authorization
@@ -182,8 +202,7 @@ Only the payee, and **only while nothing has been captured** (the contract rever
 capture). Returns the full escrow to the payer.
 
 ```sh
-rail0 payments void "$PID" -p @payee
-wait_for "$PID" voided
+rail0 payments void "$PID" -p @payee --yes -w
 ```
 
 ### Release — return the uncaptured escrow after expiry
@@ -194,7 +213,7 @@ total release (an untouched authorization); with a captured residual it returns 
 uncaptured escrow but leaves the status unchanged so the residual stays refundable.
 
 ```sh
-rail0 payments release "$PID" -p @payer
+rail0 payments release "$PID" -p @payer --yes -w
 rail0 payments get "$PID"   # released (total) or unchanged (residual remains)
 ```
 
@@ -205,8 +224,8 @@ Payee-signed, partial or full, up to `refundable_amount`. Closes as `refunded`
 leaves the status unchanged.
 
 ```sh
-rail0 payments refund "$PID" -a 3.00 -p @payee
-wait_for "$PID" refunded   # only if this fully settles it
+rail0 payments refund "$PID" -a 3.00 -p @payee --yes -w
+# status becomes `refunded` only if this fully settles it; a partial leaves it as is
 ```
 
 ### Dispute / close dispute
@@ -215,8 +234,10 @@ Payer-only, signal-only (moves no money), on funds the merchant holds
 (`refundable_amount > 0`), within the refund window.
 
 ```sh
-rail0 payments dispute "$PID" -p @payer --reason 0x<bytes32>
-rail0 payments dispute close "$PID" -p @payer
+rail0 payments dispute "$PID" -p @payer --reason 0x<bytes32> --yes -w
+rail0 payments dispute close "$PID" -p @payer --yes -w
+# A full refund already auto-closes an open dispute — check `disputed` first, or
+# this fails with `there is no open dispute to close`.
 ```
 
 ## Inspecting state & choosing the next step
@@ -236,11 +257,14 @@ assumptions — see the **Lifecycle & guards** table above.
   residual → `amount_exceeds_capturable`/`amount_exceeds_refundable`). Re-read
   `payments get` and pick a legal op; don't retry blindly.
 - **A broadcast that reverts on-chain** — the transaction lands `failed` with a
-  decoded error; the payment stays in its prior state. `wait_for` surfaces this
-  instead of spinning. Read `payments transactions <id>` for the reason before
-  retrying.
-- **Timeouts** — confirmation is a few seconds on testnet but can lag; widen the
-  poll timeout rather than assuming failure, and confirm with `payments get`.
+  decoded error; the payment stays in its prior state. `-w` surfaces that instead
+  of returning as if it had worked. Read `payments transactions <id>` for the
+  reason before retrying.
+- **`unknown flag: --yes`** — you passed it to `create`, `authorize` or `sign`,
+  which take no confirmation. Drop it there; keep it on the other six.
+- **Timeouts** — `--timeout` defaults to 15m because that covers the slowest
+  chain's finality. A 60-confirmation chain (Base Sepolia) takes minutes; raise
+  the timeout rather than assuming failure, and confirm with `payments get`.
 
 ## Safety — you are moving real money
 

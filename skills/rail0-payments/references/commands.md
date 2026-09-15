@@ -40,9 +40,9 @@ Commands that take a payment id accept **either** the UUID `id` **or** the
 
 | Command | Signer | Key flag | Other flags |
 | --- | --- | --- | --- |
-| `payments create` | payer | `-p/--private-key` | `-F/--from` (payer), `-T/--to` (payee), `-t/--token` (e.g. USDC), `-a/--amount` (decimal), `-c/--chain-id` (numeric), `-m/--mode` (`authorize`\|`charge`, default `authorize`), `-d/--description`, `-f/--payment-file` |
+| `payments create` | payer | `-p/--private-key` | `-F/--from` (payer), `-T/--to` (payee), `-t/--token` (e.g. USDC), `-a/--amount` (decimal), `-c/--chain-id` (numeric), `-C/--charge` (create with mode=charge; **there is no `-m/--mode`**), `-d/--description`, `-f/--payment-file` |
 | `payments authorize <id>` | payee | `-p` | — |
-| `payments charge <id>` | payee | `-p` | — (payment must be `-m charge`) |
+| `payments charge <id>` | payee | `-p` | — (payment must have been created with `-C`) |
 | `payments capture <id>` | payee | `-p` | `-a/--amount` (decimal, ≤ capturable) **required** |
 | `payments void <id>` | payee | `-p` | — |
 | `payments release <id>` | payer or payee | `-p` | — |
@@ -50,8 +50,24 @@ Commands that take a payment id accept **either** the UUID `id` **or** the
 | `payments dispute <id>` | payer | `-p` | `--reason 0x<bytes32>` (optional) |
 | `payments dispute close <id>` | payer | `-p` | `--reason` (optional) |
 
-All lifecycle commands are atomic (prepare → sign locally → broadcast) and return
-after broadcasting (async). Poll `payments get` for the settled status.
+### Two flags every scripted flow needs
+
+- **`--yes`** — required by `capture`, `charge`, `refund`, `void`, `release`,
+  `dispute` and `dispute close` whenever there is no TTY; without it they exit with
+  *refusing to run without confirmation in a non-interactive shell*. `create`,
+  `authorize` and `sign` do **not** accept it (`unknown flag`).
+- **`-w`/`--wait`** — on every lifecycle command; blocks until the operation
+  confirms on-chain (or fails). `--timeout` defaults to **15m**, sized for the
+  slowest chain's finality.
+
+All lifecycle commands are atomic (prepare → sign locally → broadcast) and, without
+`-w`, return as soon as they have broadcast — the status advances seconds later. Use
+`-w` rather than a hand-rolled poll.
+
+- `payments sign <id>` — deposit the payer signature on an already-created payment
+  (payer key; no `--yes`). Useful when `create` ran without a key.
+- `payments wait <id> [--until <status>] [--timeout 15m]` — block on a payment you
+  did not just act on, or on a status rather than one operation.
 
 ## Read commands
 
