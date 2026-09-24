@@ -24,9 +24,9 @@ only. No private keys, JWTs, or other secrets are committed here.
 It invokes the `rail0` CLI — `payments …`, `auth login`, `keys`, `chains`,
 `tokens`, `health` — and reads their `--json` output with `jq`. The CLI makes
 HTTPS requests only to the rail0 gateway you configure via `RAIL0_BASE_URL`. The
-skill does **not** fetch or execute remote code, and bundles no install scripts;
-the only shell it uses is the small inline `wait_for` polling function shown in
-`SKILL.md`, which just calls `rail0 payments get` in a loop.
+skill does **not** fetch or execute remote code, and bundles no install scripts
+or shell helpers: waiting for on-chain confirmation is the CLI's own `-w` flag and
+`rail0 payments wait`.
 
 ## Capability: direct money access (by design)
 
