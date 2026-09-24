@@ -12,7 +12,7 @@
 A [Claude Agent Skill](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview).
 Point your agent at a rail0 gateway and it can take, capture, refund, or cancel
 stablecoin payments *correctly*: the skill encodes the lifecycle rules, who signs
-what, and the asynchronous **act → poll** pattern so operations never race the chain.
+what, and the asynchronous **act → wait** pattern (`-w`) so operations never race the chain.
 
 ## Install
 
@@ -26,13 +26,14 @@ Then just ask your agent to make or manage a rail0 payment.
 
 ```sh
 export RAIL0_BASE_URL=https://your-gateway
-rail0 auth login -p @payee                            # merchant session (payee-gated ops)
+rail0 auth login -p @payee          # a session for reads; signing commands sign in themselves
 
-# Authorize 10 USDC into escrow, then capture it (poll between on-chain steps)
+# Authorize 10 USDC into escrow, then capture it. -w waits for each on-chain step;
+# --yes is required for fund-moving commands in a non-interactive shell.
 PID=$(rail0 payments create -F <payer> -T <payee> -t USDC -a 10.00 -c 5042002 \
-        -p @payer --json | jq -r .id)
-rail0 payments authorize "$PID" -p @payee
-rail0 payments capture   "$PID" -a 10.00 -p @payee
+        -p @payer -q)
+rail0 payments authorize "$PID" -p @payee -w
+rail0 payments capture   "$PID" -a 10.00 -p @payee --yes -w
 ```
 
 ## Lifecycle at a glance
@@ -51,7 +52,7 @@ See [`references/lifecycle.md`](skills/rail0-payments/references/lifecycle.md) f
 ## Requirements
 
 - The [`rail0` CLI](https://github.com/commercelayer/rail0-cli) on your `PATH`
-- `jq` (to read the CLI's `--json` output)
+- `jq` (optional — to read fields from the CLI's `--json` output; `-q` prints just the id)
 - A reachable rail0 gateway — set `RAIL0_BASE_URL`
 
 ## What's inside
@@ -60,7 +61,8 @@ See [`references/lifecycle.md`](skills/rail0-payments/references/lifecycle.md) f
 - [`references/`](skills/rail0-payments/references/) — lifecycle/state-machine + the full command reference
 - [`evals/`](skills/rail0-payments/evals/) — the test prompts used to validate the skill (4/4 passing end-to-end on Arc testnet)
 
-> The status poller is inlined in `SKILL.md` (the `wait_for` function), so the skill needs nothing bundled to run.
+> Waiting for the chain is built into the CLI (`-w` on every lifecycle command, and
+> `rail0 payments wait`), so the skill needs nothing bundled to run.
 
 ## Security
 

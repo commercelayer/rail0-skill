@@ -42,17 +42,19 @@ semantics (e.g. `void` is only allowed before any capture; `refund` closes as
 ## Lifecycle & guards
 
 States: `unsigned → signed → authorized | charged → captured | partially_captured`,
-plus the closed states `voided`, `released`, `refunded`. (`partially_refunded` is
-legacy on older gateways — a partial refund no longer changes status.) Two on-chain
-balances decide what's legal next: **`capturable_amount`** (escrow, set by
-authorize) and **`refundable_amount`** (payee-held, set by capture/charge).
+plus `expired` (an authorization whose window lapsed with nothing captured — the
+escrow is **still on-chain**, so it is not closed) and the closed states `voided`,
+`released`, `refunded`. (`partially_refunded` is legacy — kept for old rows, no
+longer produced: a partial refund does not change status.) Two on-chain balances
+decide what's legal next: **`capturable_amount`** (escrow, set by authorize) and
+**`refundable_amount`** (payee-held, set by capture/charge).
 
 | Op | Signer | Legal when | Outcome |
 |----|--------|-----------|---------|
 | authorize | payee | from `signed` | escrow funded → `authorized` |
 | charge | payee | from `signed`, created with `-C` | funds to payee → `charged` |
 | capture | payee | `capturable_amount > 0`, before `authorization_expiry` | drains escrow → `captured`, else `partially_captured` |
-| void | payee | nothing captured yet (`capturable_amount == amount`) | full escrow returned → `voided`; after any capture it reverts `AlreadyCaptured` |
+| void | payee | nothing captured yet (`authorized` or `expired`, `capturable_amount == amount`) | full escrow returned → `voided`; after any capture it is refused (`already_captured`) |
 | release | payer or payee | after `authorization_expiry`, `capturable_amount > 0` | uncaptured escrow returned; `released` only on a total release (untouched auth), else status unchanged |
 | refund | payee | `refundable_amount > 0`, before `refund_expiry` | funds returned; `refunded` only when fully settled, else status unchanged |
 | dispute / close | payer | `refundable_amount > 0`, within refund window | signal only — no funds move |
@@ -60,6 +62,11 @@ authorize) and **`refundable_amount`** (payee-held, set by capture/charge).
 > A **full** refund auto-closes an open dispute. Calling `dispute close` afterwards
 > fails with `there is no open dispute to close` — check `disputed` on the payment
 > before assuming you still have to close it.
+
+> After a **partial** capture and before `authorization_expiry`, neither `void` (something
+> was captured) nor `release` (the window is still open) can return the rest of the
+> escrow. The payment says so: `escrow_stranded: true` and `escrow_returnable_at` (when
+> `release` opens). Capture the rest, or wait and release.
 
 Always choose the next op from the **current status and these two balances** (read
 from `payments get --json`), never from assumptions.
@@ -87,14 +94,16 @@ from `payments get --json`), never from assumptions.
      hardcode it in the skill/repo, or commit a `.env`. Raw hex is a last resort
      for a one-off.
 
-3. **The payee must be logged in for merchant operations.** The gateway gates
-   `authorize`, `capture`, `charge`, `void`, and `refund` behind the **payee's
-   JWT** (their prepare/submit endpoints are payee-authenticated). So **log in as
-   the payee first**: `rail0 auth login -p @payee` (the same key sources as any
-   signing command — a keychain `@name`, a raw `0x…` hex key, or the
-   `RAIL0_PRIVATE_KEY` env var). `create` (payer-signed), `release` and `dispute`
-   (payer, gated on-chain) need no session; `payments list`/`history` do. Reading
-   one payment by its **UUID** needs no session.
+3. **Sessions: signing commands sign in by themselves; reads need one.** Every
+   `/payments` call is behind a SIWE session, and a payment is readable only by its
+   payer or payee. A **signing** command (`create`, `authorize`, `capture`, …) signs
+   in as its own `-p` key before it starts — no separate login needed. A **read**
+   (`payments get`, `transactions`, `transaction`, `wait`, `list`, `history`,
+   `disputes`) uses the stored session, so log in once as one of the parties:
+   `rail0 auth login -p @payee` (same key sources as any signing command). A signing
+   command also stores its session, unless a session for another address is already
+   stored — that one is left in place, and the command's own sign-in serves that
+   command only.
 
    `rail0 auth status` only decodes the cached token locally, so it can look valid
    while the gateway rejects it: a token is accepted only by the gateway whose JWT
@@ -147,31 +156,36 @@ arguments when the skill is called with any, so the helper silently ignores its
 parameters.
 
 Always machine-read with `--json` (never scrape the pretty output) and extract
-fields with `jq`, e.g. `jq -r .id`, `.rail0_id`, `.status`, `.capturable_amount`,
-`.refundable_amount`. Note the CLI may print a line before the JSON body (e.g.
-`Signed in as 0x…`), so parse from the first `{` rather than feeding the whole
-stream to `jq`.
+fields with `jq`, e.g. `.status`, `.capturable_amount`, `.refundable_amount`,
+`.escrow_stranded`. Stdout carries only the result: sign-in notices and wait
+progress go to stderr, so `--json | jq` works as is. For just the handle, `-q`/
+`--quiet` prints the payment's `rail0_id` and nothing else.
 
-Capture the payment's **UUID `id`** from the `create` output and reuse it as the
-handle for every later command — it addresses the payment with or without a
-session. The `rail0_id` also works as a handle, but resolving a bare `rail0_id`
-needs a logged-in session on current gateways, so the UUID is the safer default.
+Capture the handle from `create` (`-q`, or `--json | jq -r .rail0_id`) and reuse it
+for every later command. The UUID `id` works just as well: the gateway resolves
+either form.
+
+**Re-runs: pass `--idempotency-key`.** A `-w` that times out on a slow chain exits
+non-zero while the operation may still be in flight — and re-running a capture
+without a key is a **second capture**. Give every fund-moving command a key you
+keep (`--idempotency-key "$ORDER-capture-1"`): re-run with the same key and the CLI
+follows the original transaction instead of broadcasting another. Without a key,
+never re-run after a timeout: `payments wait` / `payments get` first.
 
 ## Recipes
 
 Addresses/keys below are placeholders. `-c 5042002` is Arc testnet; discover
-chains and tokens with `rail0 chains` / `rail0 tokens`. The merchant (payee) ops
-below assume the payee has logged in once (`rail0 auth login -p @payee`, see
-Setup); `create`, `release`, and `dispute` don't need a session. `$PID` is the
-payment's UUID `id` captured from `create`.
+chains and tokens with `rail0 chains` / `rail0 tokens`. Each signing command signs
+in as its own `-p` key (see Setup); the reads need a stored session of either
+party. `$PID` is the payment's `rail0_id` captured from `create` with `-q`.
 
 ### Authorize → capture (the escrow flow)
 
 ```sh
-# 1) Payer creates + signs the payment (mode defaults to authorize)
+# 1) Payer creates + signs the payment (mode defaults to authorize); -q prints the rail0_id
 PID=$(rail0 payments create \
   -F <payer_addr> -T <payee_addr> -t USDC -a 10.00 -c 5042002 \
-  -p @payer --json | jq -r .id)
+  -p @payer -q)
 
 # 2) Payee authorizes → funds into escrow. -w blocks until it confirms.
 #    authorize takes NO --yes (passing it is an unknown-flag error).
@@ -191,7 +205,7 @@ lands in `partially_captured`. Never capture more than `capturable_amount`.
 ```sh
 PID=$(rail0 payments create \
   -F <payer_addr> -T <payee_addr> -t USDC -a 10.00 -c 5042002 -C \
-  -p @payer --json | jq -r .id)
+  -p @payer -q)
 rail0 payments charge "$PID" -p @payee --yes -w
 ```
 
@@ -242,29 +256,43 @@ rail0 payments dispute close "$PID" -p @payer --yes -w
 
 ## Inspecting state & choosing the next step
 
+All of these need a stored session of the payer or payee (see Setup).
+
 - `rail0 payments get <id> --json` — status + live `capturable_amount` /
-  `refundable_amount` + `authorization_expiry` / `refund_expiry` + transactions.
+  `refundable_amount` + `authorization_expiry` / `refund_expiry` +
+  `escrow_stranded` / `escrow_returnable_at` + every transaction.
 - `rail0 payments transactions <id>` — the on-chain attempts (gas, block, status).
-- `rail0 payments list` / `payments history <id>` — need `auth login`.
+- `rail0 payments transaction <id> <transaction_id>` — one attempt: its status, the
+  decoded revert reason of a failed one, and whether a stuck one is `redrivable`.
+- `rail0 payments list` / `payments history <id>` / `payments disputes <id>`.
 
 Decide the next legal operation from the **balances and status**, not from
 assumptions — see the **Lifecycle & guards** table above.
 
 ## Handling failures
 
-- **`422 invalid_state`** — the op isn't legal from the current state (e.g. `void`
-  after a capture → `already_captured`/`AlreadyCaptured`; capture/refund above the
-  residual → `amount_exceeds_capturable`/`amount_exceeds_refundable`). Re-read
-  `payments get` and pick a legal op; don't retry blindly.
+- **`422` state refusals** — the op isn't legal from the current state, and the
+  error `code` says why (e.g. `already_captured` for a `void` after a capture,
+  `not_capturable`, `amount_exceeds_capturable` / `amount_exceeds_refundable` above
+  the residual). Re-read `payments get` and pick a legal op; don't retry blindly.
+- **`422` window refusals** — `authorization_expired` (capture after the window:
+  the escrow can only be released now), `authorization_not_expired` (release
+  before it), `refund_expired` (refund or dispute after the refund window). The
+  gateway refuses these **before** anything is broadcast, so no gas is spent.
 - **A broadcast that reverts on-chain** — the transaction lands `failed` with a
   decoded error; the payment stays in its prior state. `-w` surfaces that instead
-  of returning as if it had worked. Read `payments transactions <id>` for the
+  of returning as if it had worked. Read `payments transaction <id> <tx>` for the
   reason before retrying.
+- **A transaction stuck `pending` with `redrivable: true`** — the gateway holds its
+  signed bytes but the broadcast was lost. The gateway retries on its own schedule;
+  to do it now: `rail0 payments redrive <id> <transaction_id> -w` (payee). A pending
+  row **without** `redrivable` was never signed — re-run the operation instead.
 - **`unknown flag: --yes`** — you passed it to `create`, `authorize` or `sign`,
   which take no confirmation. Drop it there; keep it on the other six.
 - **Timeouts** — `--timeout` defaults to 15m because that covers the slowest
   chain's finality. A 60-confirmation chain (Base Sepolia) takes minutes; raise
-  the timeout rather than assuming failure, and confirm with `payments get`.
+  the timeout rather than assuming failure, and confirm with `payments wait` /
+  `payments get` — see *Re-runs* above before running the command again.
 
 ## Safety — you are moving real money
 

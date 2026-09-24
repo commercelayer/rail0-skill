@@ -22,6 +22,7 @@ the recovered signer, so use the right party's key for each op.
 | `unsigned` | Created; payer signature not yet stored |
 | `signed` | Payer signature stored; awaiting the payee's first action |
 | `authorized` | Funds held in escrow; capture/void/release available |
+| `expired` | The authorization window lapsed with nothing captured. The escrow is **still on-chain** — not closed: `void` or `release` returns it (`release` closes it as `released`); capture is refused (`authorization_expired`) |
 | `charged` | One-shot charge executed; refund available |
 | `captured` | Escrow fully captured by the payee |
 | `partially_captured` | Some captured; remainder still in escrow (capturable) |
@@ -29,7 +30,9 @@ the recovered signer, so use the right party's key for each op.
 | `released` | Untouched authorization fully returned to the payer (terminal) |
 | `refunded` | Fully settled by refund — escrow and refundable both drained (terminal) |
 | `partially_refunded` | **Legacy** — no longer produced; a partial refund now leaves the status unchanged |
-| `failed` | A broadcast reverted; the payment stays usable in its prior state |
+
+`failed` is a **transaction** status, never a payment's: a broadcast that reverts
+leaves the payment in its prior state, still usable.
 
 ## Transitions (happy path)
 
@@ -39,7 +42,8 @@ unsigned ──create signs──▶ signed
   signed ──charge (payee)─────▶ charged
   authorized ──capture x──▶ partially_captured ──capture (drains)──▶ captured
   authorized ──void (payee, nothing captured)──▶ voided
-  authorized ──release (after expiry, total)──▶ released
+  authorized ──window lapses, nothing captured──▶ expired
+  expired ──release (total) or void──▶ released / voided
 ```
 
 A payment only ever leaves its state to **close** (the design privileges the
@@ -53,8 +57,10 @@ change the status.
   `(0, capturable_amount]`. Drains escrow → `captured`; otherwise
   `partially_captured`.
 - **void** — payee only, and **only while nothing has been captured**
-  (`capturable_amount == amount`, i.e. status `authorized` untouched). After any
-  capture it reverts `AlreadyCaptured` → recover the remainder with `release`.
+  (`capturable_amount == amount`, status `authorized` or `expired`). After any
+  capture it is refused (`already_captured`) → recover the remainder with `release`
+  once `authorization_expiry` has passed. Until then the payment reads
+  `escrow_stranded: true` with `escrow_returnable_at` = when release opens.
 - **release** — after `authorization_expiry`, payer or payee. Returns the
   uncaptured escrow. Becomes `released` **only** on a total release (untouched
   authorization); with a captured residual the status is unchanged and the
@@ -82,5 +88,7 @@ read them from `payments get --json`, don't assume.
 - `authorization_expiry` — capture must happen before it; `release` opens after it.
 - `refund_expiry` — refund and dispute must happen before it.
 
-The gateway does not block on time by itself (the contract does), so a
-time-invalid op fails on-chain (`failed` transaction) rather than at the gateway.
+The gateway checks both windows before it prepares anything, and refuses a
+time-invalid op with `422` — `authorization_expired`, `authorization_not_expired`
+(release too early) or `refund_expired` — so no transaction is broadcast and no gas
+is spent. The contract enforces the same windows on-chain as the last line.
