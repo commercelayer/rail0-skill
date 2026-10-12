@@ -9,7 +9,7 @@ description: >-
   payment's on-chain status — even if they don't say "rail0" explicitly but the
   context is the rail0 gateway / escrow / a payment id (a UUID or a 0x…64-hex
   rail0_id). Covers key & signing setup, the prepare→sign→broadcast atomic commands,
-  and polling a payment to its settled state.
+  dispute reason codes, and polling a payment to its settled state.
 ---
 
 # rail0 payments (via the `rail0` CLI)
@@ -55,9 +55,9 @@ decide what's legal next: **`capturable_amount`** (escrow, set by authorize) and
 | charge | payee | from `signed`, created with `-C` | funds to payee → `charged` |
 | capture | payee | `capturable_amount > 0`, before `authorization_expiry` | drains escrow → `captured`, else `partially_captured` |
 | void | payee | nothing captured yet (`authorized` or `expired`, `capturable_amount == amount`) | full escrow returned → `voided`; after any capture it is refused (`already_captured`) |
-| release | payer or payee | after `authorization_expiry`, `capturable_amount > 0` | uncaptured escrow returned; `released` only on a total release (untouched auth), else status unchanged |
+| release | payer or payee | after `authorization_expiry`, `capturable_amount > 0` | uncaptured escrow returned; `released` only on a total release (untouched auth); `refunded` when it leaves both balances at zero (the captured part was already refunded); else status unchanged |
 | refund | payee | `refundable_amount > 0`, before `refund_expiry` | funds returned; `refunded` only when fully settled, else status unchanged |
-| dispute / close | payer | `refundable_amount > 0`, within refund window | signal only — no funds move |
+| dispute / close | payer | `refundable_amount > 0`, within refund window | signal only — no funds move; optional `--reason <code>` from the dictionary (`rail0 disputes reasons`) |
 
 > A **full** refund auto-closes an open dispute. Calling `dispute close` afterwards
 > fails with `there is no open dispute to close` — check `disputed` on the payment
@@ -138,8 +138,10 @@ and the very next command fails with a `422` for a state that has not arrived ye
 rail0 payments capture "$PID" -a 4.00 --yes -w   # returns once confirmed, or fails
 ```
 
-`--timeout` (default **15m**) bounds the wait and is sized for the slowest chain's
-finality: a 60-confirmation chain like Base Sepolia takes minutes, not seconds.
+Without `--timeout` the deadline follows the payment's chain: 10× its measured p90
+settlement (`rail0 chains` shows it), kept within **5m–15m**, and 15m when the chain
+has too few confirmed transactions to be measured. `--timeout` always wins. A
+60-confirmation chain like Base Sepolia takes minutes, not seconds.
 
 When you need to wait on a payment you did not just act on — or wait for a status
 rather than one operation — use the built-in:
@@ -221,14 +223,17 @@ rail0 payments void "$PID" -p @payee --yes -w
 
 ### Release — return the uncaptured escrow after expiry
 
-Permissionless (payer or payee; the caller is derived from the signing key), valid
-only after `authorization_expiry`. Closes the payment as `released` **only** on a
-total release (an untouched authorization); with a captured residual it returns the
-uncaptured escrow but leaves the status unchanged so the residual stays refundable.
+Payer or payee only (the caller is derived from the signing key; anyone else is
+refused with `422 release_submitter_not_a_party`), valid only after
+`authorization_expiry`. Closes the payment as `released` **only** on a total release
+(an untouched authorization); with a captured residual it returns the uncaptured
+escrow but leaves the status unchanged so the residual stays refundable — unless
+the captured part was already refunded, in which case both balances end at zero
+and the payment closes as `refunded`.
 
 ```sh
 rail0 payments release "$PID" -p @payer --yes -w
-rail0 payments get "$PID"   # released (total) or unchanged (residual remains)
+rail0 payments get "$PID"   # released (total), refunded (fully settled) or unchanged (residual remains)
 ```
 
 ### Refund — return captured funds to the payer
@@ -247,11 +252,22 @@ rail0 payments refund "$PID" -a 3.00 -p @payee --yes -w
 Payer-only, signal-only (moves no money), on funds the merchant holds
 (`refundable_amount > 0`), within the refund window.
 
+`--reason` is **optional** and takes a **code** from the gateway's dispute-reason
+dictionary, checked locally before anything is sent — never a free-text string.
+`rail0 disputes reasons` lists the codes with their meaning: an **open** list
+(`not_received`, `not_as_described`, `damaged_or_defective`, `duplicate`,
+`incorrect_amount`, `cancelled`, `refund_not_received`, `unauthorized`, `other`) and
+a **close** list (`resolved_with_merchant`, `withdrawn`, `item_received`, `other`);
+`full_refund` is recorded by the protocol when a full refund closes a dispute and
+cannot be chosen. Omit `--reason` to open or close with no reason (read back as
+`"No reason given"`). Pick the code from what the user said; if none fits, `other`.
+
 ```sh
-rail0 payments dispute "$PID" -p @payer --reason 0x<bytes32> --yes -w
-rail0 payments dispute close "$PID" -p @payer --yes -w
+rail0 payments dispute "$PID" -p @payer --reason not_received --yes -w
+rail0 payments dispute close "$PID" -p @payer --reason withdrawn --yes -w
 # A full refund already auto-closes an open dispute — check `disputed` first, or
 # this fails with `there is no open dispute to close`.
+# The dispute read back carries reason_code / reason_description and the close_* pair.
 ```
 
 ## Inspecting state & choosing the next step
@@ -265,6 +281,12 @@ All of these need a stored session of the payer or payee (see Setup).
 - `rail0 payments transaction <id> <transaction_id>` — one attempt: its status, the
   decoded revert reason of a failed one, and whether a stuck one is `redrivable`.
 - `rail0 payments list` / `payments history <id>` / `payments disputes <id>`.
+  `payments list` filters by status (several, comma-separated), chain, token,
+  amount range (**decimals**, with `--chain-id` and `--token`), dates, `--disputed`
+  and `--operation`; `--scope all` is the operator's cross-account list (admin
+  session only).
+- `rail0 payments update <id> -d "…"` — set or clear (`--clear`) the description:
+  gateway-side only, either party, any status, no key and no money moved.
 
 Decide the next legal operation from the **balances and status**, not from
 assumptions — see the **Lifecycle & guards** table above.

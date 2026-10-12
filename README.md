@@ -43,15 +43,15 @@ rail0 payments capture   "$PID" -a 10.00 -p @payee --yes -w
 | **authorize → capture** | payer opens, payee captures | hold funds in escrow, capture later (partial or full) |
 | **charge** | payee | one-shot: pay through immediately, no escrow |
 | **void** | payee | cancel an untouched authorization (before any capture) |
-| **release** | payer or payee | return the uncaptured escrow after `authorizationExpiry` |
+| **release** | payer or payee | return the uncaptured escrow after `authorizationExpiry` (closes as `refunded` when it settles everything) |
 | **refund** | payee | return captured funds to the buyer (partial or full) |
-| **dispute / close** | payer | buyer signal — no funds move |
+| **dispute / close** | payer | buyer signal — no funds move; optional reason code from `rail0 disputes reasons` |
 
 See [`references/lifecycle.md`](skills/rail0-payments/references/lifecycle.md) for the state machine, guards, and the two on-chain balances that drive the next legal step.
 
 ## Requirements
 
-- The [`rail0` CLI](https://github.com/commercelayer/rail0-cli) on your `PATH`
+- The [`rail0` CLI](https://github.com/commercelayer/rail0-cli) ≥ v1.3.0 on your `PATH` (dispute-reason codes, `payments update`)
 - `jq` (optional — to read fields from the CLI's `--json` output; `-q` prints just the id)
 - A reachable rail0 gateway — set `RAIL0_BASE_URL`
 
