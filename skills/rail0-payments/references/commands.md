@@ -35,6 +35,9 @@ session, which must belong to the payment's payer or payee.
   `@name`, a raw `0x` hex key, or the `RAIL0_PRIVATE_KEY` env var.
 - `rail0 auth status` — show address / account / expiry. `rail0 auth logout` —
   clear the token.
+- `rail0 account` / `account update --name … --email … --priority-tip[=false]` — the
+  signed-in account's profile; `--priority-tip=false` makes the merchant's own
+  transactions pay the chain's minimum tip instead of the suggested priority fee.
 
 ## Payment id argument
 
@@ -53,8 +56,12 @@ Commands that take a payment id accept **either** the UUID `id` **or** the
 | `payments void <id>` | payee | `-p` | — |
 | `payments release <id>` | payer or payee | `-p` | — |
 | `payments refund <id>` | payee | `-p` | `-a/--amount` (decimal, ≤ refundable) **required** |
-| `payments dispute <id>` | payer | `-p` | `--reason 0x<bytes32>` (optional) |
-| `payments dispute close <id>` | payer | `-p` | `--reason` (optional) |
+| `payments dispute <id>` | payer | `-p` | `--reason <code>` (optional; an **open** code from `rail0 disputes reasons`, or exactly its bytes32) |
+| `payments dispute close <id>` | payer | `-p` | `--reason <code>` (optional; a **close** code — `rail0 disputes reasons --kind close`) |
+
+- `rail0 disputes reasons [--kind open|close|system] [--json]` — the dictionary the
+  CLI was built with: code, description and, in `--json`, the bytes32
+  (`keccak256("rail0.dispute.<code>")`). Offline; the gateway's list is authoritative.
 
 ### Two flags every scripted flow needs
 
@@ -63,8 +70,9 @@ Commands that take a payment id accept **either** the UUID `id` **or** the
   *refusing to run without confirmation in a non-interactive shell*. `create`,
   `authorize` and `sign` do **not** accept it (`unknown flag`).
 - **`-w`/`--wait`** — on every lifecycle command; blocks until the operation
-  confirms on-chain (or fails). `--timeout` defaults to **15m**, sized for the
-  slowest chain's finality.
+  confirms on-chain (or fails). Without `--timeout` the deadline is 10× the chain's
+  measured p90 settlement, kept within **5m–15m** (15m when unmeasured); `--timeout`
+  always wins.
 
 And one every re-runnable flow needs:
 
@@ -79,8 +87,11 @@ All lifecycle commands are atomic (prepare → sign locally → broadcast) and, 
 
 - `payments sign <id>` — deposit the payer signature on an already-created payment
   (payer key; no `--yes`). Useful when `create` ran without a key.
-- `payments wait <id> [--until <status>] [--timeout 15m]` — block on a payment you
-  did not just act on, or on a status rather than one operation.
+- `payments wait <id> [--until <status>] [--timeout <duration>]` — block on a payment
+  you did not just act on, or on a status rather than one operation. Same default
+  deadline as `-w`.
+- `payments update <id> -d <text>` / `--clear` — set or clear the description
+  (gateway-side only; payer or payee, any status; no key, no `--yes`).
 - `payments redrive <id> <transaction_id> [-w]` — payee; re-broadcast a stuck
   `pending` transaction that reads `redrivable: true` (the gateway already holds its
   signed bytes). No new signature, no `--yes`.
@@ -94,7 +105,7 @@ Every read needs a stored session of the payment's payer or payee.
 | `payments get <id>` | status, balances, expiries, `escrow_stranded`/`escrow_returnable_at`, every transaction |
 | `payments transactions <id>` | on-chain attempts; `--operation`, `--status`, `--sort` |
 | `payments transaction <id> <transaction_id>` | one attempt: status, decoded revert reason, `redrivable` |
-| `payments list` | your payer/payee payments; `--chain-id`, `--disputed`, `--min-amount`/`--max-amount`, `--created-from`/`--created-to` (ISO-8601), `--sort` |
+| `payments list` | your payer/payee payments; `--status` (several, repeated or comma-separated), `--mode`, `--payer`/`--payee`, `--token`, `--chain-id`, `--disputed`, `--operation`, `--rail0-id`, `--min-amount`/`--max-amount` (decimals; need `--chain-id` and `--token`), `--created-from`/`--created-to` (ISO-8601), `--sort`, `--all` (every page). `--scope all` (admin only): every payment on the gateway, plus `--account`, `--has-error`, `--expiring-within <duration>` |
 | `payments history <id>` | chronological timeline |
 | `payments disputes <id>` | dispute open/close history; `--status open\|closed` |
 
@@ -102,4 +113,5 @@ Every read needs a stored session of the payment's payer or payee.
 
 - `create` / `capture` / `refund` `--amount`: **decimal** token units (`"10.50"`);
   the gateway converts to base units.
-- `payments list` `--min-amount`/`--max-amount`: **base units** (integers).
+- `payments list` `--min-amount`/`--max-amount`: **decimal** token units too (`1.00`);
+  they need `--chain-id` and `--token`, since the conversion uses the token's decimals.

@@ -28,7 +28,7 @@ the recovered signer, so use the right party's key for each op.
 | `partially_captured` | Some captured; remainder still in escrow (capturable) |
 | `voided` | Authorization cancelled before any capture; escrow returned (terminal) |
 | `released` | Untouched authorization fully returned to the payer (terminal) |
-| `refunded` | Fully settled by refund — escrow and refundable both drained (terminal) |
+| `refunded` | Fully settled — escrow and refundable both drained, by refund or by a final release (terminal) |
 | `partially_refunded` | **Legacy** — no longer produced; a partial refund now leaves the status unchanged |
 
 `failed` is a **transaction** status, never a payment's: a broadcast that reverts
@@ -61,17 +61,22 @@ change the status.
   capture it is refused (`already_captured`) → recover the remainder with `release`
   once `authorization_expiry` has passed. Until then the payment reads
   `escrow_stranded: true` with `escrow_returnable_at` = when release opens.
-- **release** — after `authorization_expiry`, payer or payee. Returns the
-  uncaptured escrow. Becomes `released` **only** on a total release (untouched
-  authorization); with a captured residual the status is unchanged and the
-  captured funds stay refundable.
+- **release** — after `authorization_expiry`, payer or payee only (`422
+  release_submitter_not_a_party` for anyone else). Returns the uncaptured escrow.
+  Becomes `released` **only** on a total release (untouched authorization); with a
+  captured residual the status is unchanged and the captured funds stay refundable;
+  when the captured part was already refunded, the release leaves both balances at
+  zero and the payment closes as `refunded`.
 - **refund** — payee only, `amount` in `(0, refundable_amount]`, before
   `refund_expiry`. Becomes `refunded` **only when fully settled** (both buckets
   zero); otherwise the status is unchanged.
 - **dispute** — payer only, only while `refundable_amount > 0` and within the
   refund window; signal-only (no funds move). One open dispute at a time. A pure,
   uncaptured authorization is cancelled via `void`, not disputed.
-- **dispute close** — payer only; a full refund also auto-closes an open dispute.
+- **dispute close** — payer only; a full refund also auto-closes an open dispute
+  (recorded with the system reason `full_refund`). Open and close each take an
+  optional reason code from the gateway's dictionary (`rail0 disputes reasons`);
+  none means `"No reason given"`.
 
 ## Two independent balances
 
