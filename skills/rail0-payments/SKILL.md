@@ -106,11 +106,13 @@ from `payments get --json`), never from assumptions.
    command only.
 
    `rail0 auth status` only decodes the cached token locally, so it can look valid
-   while the gateway rejects it: a token is accepted only by the gateway whose JWT
-   secret signed it. Point the CLI at a different gateway (staging vs local), or
-   reuse a token minted under a different `JWT_SECRET`, and authed calls `401`
-   despite a healthy-looking status. On a surprising `401 not authorized`, just log
-   in again against the gateway you're targeting.
+   while the gateway rejects it: a token is accepted only by the gateway environment
+   that minted it — the one whose JWT secret signed it, and whose environment
+   (local, staging, production) its audience names, even if two environments share
+   a secret. Point the CLI at a different gateway (staging vs local), or reuse a
+   token minted elsewhere, and authed calls `401` despite a healthy-looking status.
+   On a surprising `401 not authorized`, just log in again against the gateway
+   you're targeting.
 
 ## The core pattern: act with `--wait`, and confirm with `--yes`
 
