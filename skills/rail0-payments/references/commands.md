@@ -8,7 +8,14 @@ Exact flags and arguments for the commands this skill uses. Run
 - `--base-url <url>` / `RAIL0_BASE_URL` / `rail0 config set base-url <url>` —
   target gateway (default `https://api.rail0.xyz`). Precedence: flag > env >
   config file > default.
-- `--json` — strict JSON output (use this for scripting; also the default when
+- `--agent` / `RAIL0_AGENT=1` (CLI ≥ 1.6.0) — **agent mode, use this**: one JSON line
+  per command on stdout, `{"ok":true,"data":…}` or `{"ok":false,"error":{code,
+  message,exit_code,http_status,reason,hint,retry_after_s,retryable,in_flight},
+  "next_steps":[…]}`; JSON Lines events on stderr; never a prompt. Not combinable with
+  `-q`/`--pretty`; refuses `keys generate` and `init`. Exit codes: `2` usage, `3` 401,
+  `4` 403, `5` 404, `6` 409, `7` 400/422, `8` 5xx, `9` network, `10` 429, `11` a wait
+  that ran out of time (in flight), `130` cancelled.
+- `--json` — strict JSON output (the result alone, no envelope; also the default when
   piped). `-q/--quiet` — only the result's id (`rail0_id` for a payment,
   `transaction_hash`/`id` otherwise), one per line. `--pretty` — human table/kv view.
   `--debug` — HTTP traces to stderr. Stdout carries only the result; sign-in notices
@@ -66,8 +73,8 @@ Commands that take a payment id accept **either** the UUID `id` **or** the
 ### Two flags every scripted flow needs
 
 - **`--yes`** — required by `capture`, `charge`, `refund`, `void`, `release`,
-  `dispute` and `dispute close` whenever there is no TTY; without it they exit with
-  *refusing to run without confirmation in a non-interactive shell*. `create`,
+  `dispute` and `dispute close` whenever there is no TTY or agent mode is on; without
+  it they exit `2` (`confirmation_required`). `create`,
   `authorize` and `sign` do **not** accept it (`unknown flag`).
 - **`-w`/`--wait`** — on every lifecycle command; blocks until the operation
   confirms on-chain (or fails). Without `--timeout` the deadline is 10× the chain's

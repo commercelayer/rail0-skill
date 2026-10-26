@@ -51,15 +51,15 @@ See [`references/lifecycle.md`](skills/rail0-payments/references/lifecycle.md) f
 
 ## Requirements
 
-- The [`rail0` CLI](https://github.com/commercelayer/rail0-cli) ≥ v1.3.0 on your `PATH` (dispute-reason codes, `payments update`)
-- `jq` (optional — to read fields from the CLI's `--json` output; `-q` prints just the id)
+- The [`rail0` CLI](https://github.com/commercelayer/rail0-cli) ≥ v1.6.0 on your `PATH` — agent mode (`RAIL0_AGENT=1`: one JSON envelope per command, exit codes for every outcome). Older CLIs (≥ v1.3.0) still work through `--json`; see the skill's *Agent mode* section
+- `jq` — to read fields from the CLI's JSON envelope (`.data.…`, `.error.code`)
 - A reachable rail0 gateway — set `RAIL0_BASE_URL`
 
 ## What's inside
 
 - [`SKILL.md`](skills/rail0-payments/SKILL.md) — the skill: mental model, setup, per-operation recipes, error handling, safety
 - [`references/`](skills/rail0-payments/references/) — lifecycle/state-machine + the full command reference
-- [`evals/`](skills/rail0-payments/evals/) — the test prompts used to validate the skill (4/4 passing end-to-end on Arc testnet)
+- [`evals/`](skills/rail0-payments/evals/) — the test prompts used to validate the skill (the first four pass end-to-end on Arc testnet; `agent-mode-over-capture-is-refused` runs once CLI v1.6.0 is released)
 
 > Waiting for the chain is built into the CLI (`-w` on every lifecycle command, and
 > `rail0 payments wait`), so the skill needs nothing bundled to run.

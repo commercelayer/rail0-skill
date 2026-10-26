@@ -86,7 +86,7 @@ change the status.
   `capture`/`charge`, reduced by `refund`). Drives refund/dispute.
 
 Always choose the next operation from the current status **and** these balances —
-read them from `payments get --json`, don't assume.
+read them from `payments get` (`.data.…` in agent mode), don't assume.
 
 ## Time windows
 
