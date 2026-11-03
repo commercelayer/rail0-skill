@@ -20,12 +20,21 @@ what, and the asynchronous **act → wait** pattern (`-w`) so operations never r
 npx skills add commercelayer/rail0-skill
 ```
 
+The skill drives the [`rail0` CLI](https://github.com/commercelayer/rail0-cli), which has
+to be on your `PATH` (see [Requirements](#requirements)). Its install script fetches the
+latest release, checks it against the release checksums, and puts `rail0` (and the `r0`
+alias) in `~/.local/bin`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/commercelayer/rail0-cli/main/install.sh | sh
+```
+
 Then just ask your agent to make or manage a rail0 payment.
 
 ## Quickstart — what the agent runs
 
 ```sh
-export RAIL0_BASE_URL=https://your-gateway
+export RAIL0_BASE_URL=https://your-gateway   # omit for the default, https://api.rail0.xyz
 rail0 auth login -p @payee          # a session for reads; signing commands sign in themselves
 
 # Authorize 10 USDC into escrow, then capture it. -w waits for each on-chain step;
@@ -40,11 +49,11 @@ rail0 payments capture   "$PID" -a 10.00 -p @payee --yes -w
 
 | Operation | Who signs | What it does |
 |---|---|---|
-| **authorize → capture** | payer opens, payee captures | hold funds in escrow, capture later (partial or full) |
-| **charge** | payee | one-shot: pay through immediately, no escrow |
-| **void** | payee | cancel an untouched authorization (before any capture) |
-| **release** | payer or payee | return the uncaptured escrow after `authorizationExpiry` (closes as `refunded` when it settles everything) |
-| **refund** | payee | return captured funds to the buyer (partial or full) |
+| **authorize → capture** | payer creates + signs, payee authorizes and captures | hold funds in escrow, capture later (partial or full) |
+| **charge** | payer creates + signs (`-C`), payee charges | one-shot: pay through immediately, no escrow |
+| **void** | payee | cancel an untouched authorization (before any capture, also once `expired`) |
+| **release** | payer or payee | return the uncaptured escrow after `authorization_expiry` (`released` when nothing was captured; `refunded` when it leaves both balances at zero; otherwise status unchanged) |
+| **refund** | payee | return captured funds to the buyer (partial or full; `refunded` only when fully settled) |
 | **dispute / close** | payer | buyer signal — no funds move; optional reason code from `rail0 disputes reasons` |
 
 See [`references/lifecycle.md`](skills/rail0-payments/references/lifecycle.md) for the state machine, guards, and the two on-chain balances that drive the next legal step.
@@ -69,8 +78,8 @@ See [`references/lifecycle.md`](skills/rail0-payments/references/lifecycle.md) f
 Private keys stay local. The CLI signs locally and sends only **signatures and
 signed transactions** to the gateway — never the key. Prefer the OS keychain
 (`rail0 keys add` → `@name`) or a secrets-manager-injected `RAIL0_PRIVATE_KEY`;
-never paste a raw key inline. See the skill's *"Signing keys — reference them,
-never embed them"* section, and [`SECURITY.md`](SECURITY.md) for the full trust model.
+never paste a raw key inline. See the skill's *"Signing keys stay local — reference
+them, never embed them"* setup step, and [`SECURITY.md`](SECURITY.md) for the full trust model.
 
 ## License
 
