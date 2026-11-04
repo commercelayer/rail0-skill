@@ -69,7 +69,7 @@ decide what's legal next: **`capturable_amount`** (escrow, set by authorize) and
 > `release` opens). Capture the rest, or wait and release.
 
 Always choose the next op from the **current status and these two balances** (read
-from `payments get --json`), never from assumptions.
+from `payments get`'s `.data`), never from assumptions.
 
 ## Setup
 
@@ -114,18 +114,75 @@ from `payments get --json`), never from assumptions.
    On a surprising `401 not authorized`, just log in again against the gateway
    you're targeting.
 
+## Agent mode: turn it on once
+
+Run the CLI in **agent mode** (rail0 CLI **1.6.0 or later**): set it once for the whole
+session and every command answers in one shape you can parse, never stops at a prompt
+and never paints the terminal.
+
+```sh
+export RAIL0_AGENT=1        # or --agent on each call
+rail0 version               # {"ok":true,"data":{"version":"1.6.0",…}}
+```
+
+If `rail0 version` prints plain text (`rail0 1.5.x …`), the installed CLI predates
+agent mode: the variable is ignored there. Fall back to `--json` (the result alone,
+no envelope; read fields without the `.data` prefix) and the exit-code table below
+minus `2` and `11`, which were `1`.
+
+**stdout is exactly one JSON line per command:**
+
+```json
+{"ok":true,"data":{ …what --json prints… }}
+{"ok":false,"error":{"code":"not_capturable","message":"request rejected (HTTP 422): …","exit_code":7,"http_status":422,"hint":"…","retryable":false,"in_flight":false},"next_steps":["…"]}
+```
+
+- Branch on **`.ok`**; read results under **`.data`** (`.data.status`,
+  `.data.rail0_id`, `.data.capturable_amount` …).
+- On failure read **`.error.code`** — the gateway's machine code (`not_capturable`,
+  `authorization_expired`, `amount_exceeds_refundable` …) or one of the CLI's
+  (`usage_error`, `confirmation_required`, `flag_conflict`, `wait_timeout`,
+  `network_error`, `aborted`, `unavailable_in_agent_mode`). `.error.hint` says what to
+  do; `.error.message` is the sentence to show the user.
+- **`.error.in_flight: true`** means an on-chain operation may still be running.
+  **Never repeat the command**: run the command in `.next_steps` (a `payments wait`)
+  and decide from what it returns.
+- **`.error.retryable: true`** is the only case where the identical command may be run
+  again (after `.error.retry_after_s` seconds, when present).
+- **stderr carries JSON Lines events** (`{"event":"signed_in",…}`,
+  `{"event":"progress",…}`, `{"event":"dispute_reason","reason":null}`): useful to
+  narrate, never needed to decide.
+
+**Exit codes** (the same with or without agent mode):
+
+| Code | Meaning | What to do |
+|---|---|---|
+| `0` | success | read `.data` |
+| `2` | usage: bad flag/argument, missing `--yes`, `-q`/`--pretty` with agent mode | fix the call; nothing ran |
+| `3` | not authorized (401) | `rail0 auth login -p @<key>` against this gateway |
+| `4` / `5` | forbidden / not found (also: not your payment) | check the key/party |
+| `6` | conflict (409) | read `.error` |
+| `7` | rejected (400/422): illegal from this state, or a bad value | re-read `payments get`, pick a legal op |
+| `8` | gateway error (5xx) | check `payments get` before any retry |
+| `9` | network: no response | check `payments get` before re-running a fund-moving command |
+| `10` | rate limited | retry after `.error.retry_after_s` |
+| `11` | `--wait` ran out of time — **in flight** | `payments wait`, never re-run |
+| `130` | cancelled | — |
+
+Agent mode has no `-q`: take the handle from `.data.rail0_id` (`| jq -r .data.rail0_id`).
+It refuses `rail0 keys generate` (a generated private key would land in your context):
+keys are created by the human, in a terminal, and reach you only as `@name`.
+
 ## The core pattern: act with `--wait`, and confirm with `--yes`
 
 Two flags decide whether a scripted flow works at all. Neither is optional for an
 agent.
 
-**`--yes` is REQUIRED in a non-interactive shell.** Every fund-moving command —
-`capture`, `charge`, `refund`, `void`, `release`, `dispute` (and `dispute close`) —
-asks for confirmation, and without a TTY it refuses outright:
-
-```
-Error: refusing to run without confirmation in a non-interactive shell; pass --yes to proceed
-```
+**`--yes` is REQUIRED in a non-interactive shell and in agent mode.** Every
+fund-moving command — `capture`, `charge`, `refund`, `void`, `release`, `dispute` (and
+`dispute close`) — asks for confirmation, and without a TTY (or with agent mode on) it
+refuses outright, exit `2`, `.error.code == "confirmation_required"`. Agent mode is not
+consent: the `--yes` is yours to add, after the human confirmed (see *Safety*).
 
 `create`, `authorize` and `sign` do **not** take `--yes`; passing it is an
 `unknown flag` error. So: confirm the parameters with the human (see *Safety*),
@@ -159,19 +216,17 @@ useless: a `$1`/`$2` inside it is substituted with the skill's own invocation
 arguments when the skill is called with any, so the helper silently ignores its
 parameters.
 
-Always machine-read with `--json` (never scrape the pretty output) and extract
-fields with `jq`, e.g. `.status`, `.capturable_amount`, `.refundable_amount`,
-`.escrow_stranded`. Stdout carries only the result: sign-in notices and wait
-progress go to stderr, so `--json | jq` works as is. For just the handle, `-q`/
-`--quiet` prints the payment's `rail0_id` and nothing else.
+Always machine-read the envelope (never scrape the pretty output) and extract fields
+with `jq`, e.g. `.data.status`, `.data.capturable_amount`, `.data.refundable_amount`,
+`.data.escrow_stranded`. Stdout carries only the envelope: sign-in notices and wait
+progress are events on stderr, so `| jq` works as is.
 
-Capture the handle from `create` (`-q`, or `--json | jq -r .rail0_id`) and reuse it
-for every later command. The UUID `id` works just as well: the gateway resolves
-either form.
+Capture the handle from `create` (`| jq -r .data.rail0_id`) and reuse it for every
+later command. The UUID `id` works just as well: the gateway resolves either form.
 
 **Re-runs: pass `--idempotency-key`.** A `-w` that times out on a slow chain exits
-non-zero while the operation may still be in flight — and re-running a capture
-without a key is a **second capture**. Give every fund-moving command a key you
+`11` (`.error.in_flight: true`) while the operation may still be in flight — and
+re-running a capture without a key is a **second capture**. Give every fund-moving command a key you
 keep (`--idempotency-key "$ORDER-capture-1"`): re-run with the same key and the CLI
 follows the original transaction instead of broadcasting another. Without a key,
 never re-run after a timeout: `payments wait` / `payments get` first.
@@ -181,15 +236,16 @@ never re-run after a timeout: `payments wait` / `payments get` first.
 Addresses/keys below are placeholders. `-c 5042002` is Arc testnet; discover
 chains and tokens with `rail0 chains` / `rail0 tokens`. Each signing command signs
 in as its own `-p` key (see Setup); the reads need a stored session of either
-party. `$PID` is the payment's `rail0_id` captured from `create` with `-q`.
+party. Agent mode is on (`RAIL0_AGENT=1`); `$PID` is the payment's `rail0_id`, taken
+from `create`'s envelope.
 
 ### Authorize → capture (the escrow flow)
 
 ```sh
-# 1) Payer creates + signs the payment (mode defaults to authorize); -q prints the rail0_id
+# 1) Payer creates + signs the payment (mode defaults to authorize)
 PID=$(rail0 payments create \
   -F <payer_addr> -T <payee_addr> -t USDC -a 10.00 -c 5042002 \
-  -p @payer -q)
+  -p @payer | jq -r .data.rail0_id)
 
 # 2) Payee authorizes → funds into escrow. -w blocks until it confirms.
 #    authorize takes NO --yes (passing it is an unknown-flag error).
@@ -209,7 +265,7 @@ lands in `partially_captured`. Never capture more than `capturable_amount`.
 ```sh
 PID=$(rail0 payments create \
   -F <payer_addr> -T <payee_addr> -t USDC -a 10.00 -c 5042002 -C \
-  -p @payer -q)
+  -p @payer | jq -r .data.rail0_id)
 rail0 payments charge "$PID" -p @payee --yes -w
 ```
 
@@ -235,7 +291,7 @@ and the payment closes as `refunded`.
 
 ```sh
 rail0 payments release "$PID" -p @payer --yes -w
-rail0 payments get "$PID"   # released (total), refunded (fully settled) or unchanged (residual remains)
+rail0 payments get "$PID" | jq -r .data.status   # released (total), refunded (fully settled) or unchanged (residual remains)
 ```
 
 ### Refund — return captured funds to the payer
@@ -276,7 +332,7 @@ rail0 payments dispute close "$PID" -p @payer --reason withdrawn --yes -w
 
 All of these need a stored session of the payer or payee (see Setup).
 
-- `rail0 payments get <id> --json` — status + live `capturable_amount` /
+- `rail0 payments get <id>` (agent mode) — status + live `capturable_amount` /
   `refundable_amount` + `authorization_expiry` / `refund_expiry` +
   `escrow_stranded` / `escrow_returnable_at` + every transaction.
 - `rail0 payments transactions <id>` — the on-chain attempts (gas, block, status).
@@ -311,9 +367,10 @@ assumptions — see the **Lifecycle & guards** table above.
   signed bytes but the broadcast was lost. The gateway retries on its own schedule;
   to do it now: `rail0 payments redrive <id> <transaction_id> -w` (payee). A pending
   row **without** `redrivable` was never signed — re-run the operation instead.
-- **`unknown flag: --yes`** — you passed it to `create`, `authorize` or `sign`,
-  which take no confirmation. Drop it there; keep it on the other six.
-- **Timeouts** — `--timeout` defaults to 15m because that covers the slowest
+- **`unknown flag: --yes`** (exit `2`, `usage_error`) — you passed it to `create`,
+  `authorize` or `sign`, which take no confirmation. Drop it there; keep it on the
+  other six.
+- **Timeouts** (exit `11`, `.error.in_flight: true`) — `--timeout` defaults to 15m because that covers the slowest
   chain's finality. A 60-confirmation chain (Base Sepolia) takes minutes; raise
   the timeout rather than assuming failure, and confirm with `payments wait` /
   `payments get` — see *Re-runs* above before running the command again.

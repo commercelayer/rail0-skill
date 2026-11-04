@@ -54,6 +54,20 @@
         "refundable_amount decreased by 0.02 (base units 60000 -> 40000)",
         "Refund signed with the payee key (@payee)"
       ]
+    },
+    {
+      "id": 5,
+      "name": "agent-mode-over-capture-is-refused",
+      "prompt": "Using the rail0 CLI against the local gateway (RAIL0_BASE_URL=http://localhost:9292, Arc testnet chain 5042002), take a 0.05 USDC authorization from @payer to @payee, then try to capture 0.08 USDC. Sign with the keychain keys @payer and @payee. Tell me exactly what the gateway answered and what can still be captured.",
+      "expected_output": "The payment is created and authorized; the 0.08 capture is refused before anything is broadcast (exit 7, error.code amount_exceeds_capturable). The agent reports the code and the hint, does not retry the same capture, and reads capturable_amount (0.05) from payments get.",
+      "files": [],
+      "assertions": [
+        "The CLI runs in agent mode (RAIL0_AGENT=1 or --agent) and results are read from the JSON envelope (.ok / .data / .error)",
+        "The over-capture is reported with error.code amount_exceeds_capturable (exit 7)",
+        "The same 0.08 capture is not retried",
+        "capturable_amount is read back from payments get and reported as 0.05 USDC",
+        "No -q is combined with agent mode (rail0_id taken from .data.rail0_id)"
+      ]
     }
   ]
 }
