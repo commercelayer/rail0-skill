@@ -93,6 +93,12 @@ from `payments get`'s `.data`), never from assumptions.
    - **Never** paste a raw `0x…` key inline (`-p 0xabc…` lands in shell history),
      hardcode it in the skill/repo, or commit a `.env`. Raw hex is a last resort
      for a one-off.
+   - **Do not run `keys add` or `keys generate` yourself.** Both handle a raw private
+     key, which must not pass through your context: the person saves the key in a
+     terminal once and gives you its `@name`. From CLI 1.10.0 agent mode refuses both
+     (`unavailable_in_agent_mode`), and a signing command run with no key answers
+     `missing_private_key` (exit `2`) at once: it never waits for a key on stdin, so
+     do not try to pipe one in.
 
 3. **Sessions: signing commands sign in by themselves; reads need one.** Every
    `/payments` call is behind a SIWE session, and a payment is readable only by its
@@ -142,8 +148,10 @@ minus `2` and `11`, which were `1`.
 - On failure read **`.error.code`** — the gateway's machine code (`not_capturable`,
   `authorization_expired`, `amount_exceeds_refundable` …) or one of the CLI's
   (`usage_error`, `confirmation_required`, `flag_conflict`, `wait_timeout`,
-  `network_error`, `aborted`, `unavailable_in_agent_mode`). `.error.hint` says what to
-  do; `.error.message` is the sentence to show the user.
+  `network_error`, `aborted`, `unavailable_in_agent_mode`; from 1.10.0 also
+  `missing_private_key`, `not_logged_in`, `session_expired`, `account_required`,
+  `cli_error`). `.error.hint` says what to do; `.error.message` is the sentence to
+  show the user.
 - **`.error.in_flight: true`** means an on-chain operation may still be running.
   **Never repeat the command**: run the command in `.next_steps` (a `payments wait`)
   and decide from what it returns.
@@ -158,8 +166,9 @@ minus `2` and `11`, which were `1`.
 | Code | Meaning | What to do |
 |---|---|---|
 | `0` | success | read `.data` |
-| `2` | usage: bad flag/argument, missing `--yes`, `-q`/`--pretty` with agent mode | fix the call; nothing ran |
-| `3` | not authorized (401) | `rail0 auth login -p @<key>` against this gateway |
+| `1` | a failure that changing the command will not fix (`cli_error`) | read `.error.message`; do not loop on it |
+| `2` | usage: bad flag/argument, missing `--yes` or signing key, `-q`/`--pretty` with agent mode | fix the call; nothing ran |
+| `3` | not authorized (401), or no session stored on this machine (`not_logged_in`, `session_expired`) | `rail0 auth login -p @<key>` against this gateway |
 | `4` / `5` | forbidden / not found (also: not your payment) | check the key/party |
 | `6` | conflict (409) | read `.error` |
 | `7` | rejected (400/422): illegal from this state, or a bad value | re-read `payments get`, pick a legal op |
@@ -170,6 +179,45 @@ minus `2` and `11`, which were `1`.
 | `130` | cancelled | — |
 
 Agent mode has no `-q`: take the handle from `.data.rail0_id` (`| jq -r .data.rail0_id`).
+
+Before CLI 1.10.0 many mistakes in the call (an invalid or missing flag value, no
+signing key) and a missing session exited `1`, like any other failure. From 1.10.0
+they exit `2` and `3` as in the table.
+
+### Ask the CLI instead of guessing (CLI 1.10.0 or later)
+
+In agent mode `help` answers in data, so a command and its flags need not be guessed
+or read out of prose:
+
+```sh
+rail0 help                      # .data.commands[]: every command, with .path, .args and .flags (names)
+rail0 help payments             # the same index for one group
+rail0 help payments capture     # .data.flags[]: .name, .shorthand, .type, .default, .usage, .required
+```
+
+- `.data.needs_yes`, `.data.signs` and `.data.can_wait` say whether the command needs
+  `--yes`, takes `--private-key`, and accepts `--wait`. `.data.agent_mode` is present
+  when agent mode refuses the command.
+- `.data.help` is the text a person would read.
+- `rail0 help` (the whole CLI) also lists `.data.environment`, and under
+  `.data.agent_mode` the exit codes and the CLI's own error codes.
+- An unknown command or flag is a `usage_error` envelope (exit `2`), never bare text.
+
+Before 1.10.0, `--help` prints text even in agent mode: read it as text.
+
+### Lists say whether there is more (CLI 1.10.0 or later)
+
+A list (`payments list`, `payments transactions`, `disputes`, `wallets`,
+`webhooks list` …) answers with `.page` beside `.data`:
+
+```json
+{"ok":true,"data":[…],"page":{"page":1,"per_page":25,"total":70,"total_pages":3,"has_more":true,"next_page":2}}
+```
+
+When `.page.has_more` is true, pass `--page <.page.next_page>` for the next rows, or
+`payments list --all` for every payment at once. Do not treat one page as the whole
+list. Before 1.10.0 there is no `.page`: use `--all`, or keep asking for the next
+`--page` until the array comes back empty.
 It refuses `rail0 keys generate` (a generated private key would land in your context):
 keys are created by the human, in a terminal, and reach you only as `@name`.
 
@@ -397,7 +445,8 @@ human in the loop:
 ## Command reference
 
 This SKILL.md is self-contained — the recipes and the **Lifecycle & guards** table
-cover every operation. For exhaustive flags/defaults, run `rail0 <command> --help`,
+cover every operation. For exhaustive flags/defaults, run `rail0 help <command>` (data
+in agent mode from CLI 1.10.0, text before; `rail0 <command> --help` is the same thing),
 or see the bundled references (present next to this file when installed):
 [`references/commands.md`](https://github.com/commercelayer/rail0-skill/blob/main/skills/rail0-payments/references/commands.md)
 and [`references/lifecycle.md`](https://github.com/commercelayer/rail0-skill/blob/main/skills/rail0-payments/references/lifecycle.md).

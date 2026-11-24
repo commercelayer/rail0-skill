@@ -60,7 +60,7 @@ See [`references/lifecycle.md`](skills/rail0-payments/references/lifecycle.md) f
 
 ## Requirements
 
-- The [`rail0` CLI](https://github.com/commercelayer/rail0-cli) ≥ v1.6.0 on your `PATH` — agent mode (`RAIL0_AGENT=1`: one JSON envelope per command, exit codes for every outcome). Older CLIs (≥ v1.3.0) still work through `--json`; see the skill's *Agent mode* section
+- The [`rail0` CLI](https://github.com/commercelayer/rail0-cli) ≥ v1.6.0 on your `PATH` — agent mode (`RAIL0_AGENT=1`: one JSON envelope per command, exit codes for every outcome). Older CLIs (≥ v1.3.0) still work through `--json`; see the skill's *Agent mode* section Help as data (`rail0 help <command>`), the `page` of a list and the finer exit codes (`2` for any mistake in the call, `3` when no session is stored) need ≥ v1.10.0; the skill says what to do before that.
 - `jq` — to read fields from the CLI's JSON envelope (`.data.…`, `.error.code`)
 - A reachable rail0 gateway — set `RAIL0_BASE_URL`
 

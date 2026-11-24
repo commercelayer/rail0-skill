@@ -1,7 +1,9 @@
 # rail0 CLI — command reference
 
 Exact flags and arguments for the commands this skill uses. Run
-`rail0 <command> --help` for the authoritative inline help.
+`rail0 help <command>` (or `rail0 <command> --help`) for the authoritative inline help;
+in agent mode, from CLI 1.10.0, it answers in data: `.data.flags[]` with each flag's
+name, type, default and meaning.
 
 ## Global
 
@@ -12,9 +14,12 @@ Exact flags and arguments for the commands this skill uses. Run
   per command on stdout, `{"ok":true,"data":…}` or `{"ok":false,"error":{code,
   message,exit_code,http_status,reason,hint,retry_after_s,retryable,in_flight},
   "next_steps":[…]}`; JSON Lines events on stderr; never a prompt. Not combinable with
-  `-q`/`--pretty`; refuses `keys generate` and `init`. Exit codes: `2` usage, `3` 401,
-  `4` 403, `5` 404, `6` 409, `7` 400/422, `8` 5xx, `9` network, `10` 429, `11` a wait
-  that ran out of time (in flight), `130` cancelled.
+  `-q`/`--pretty`; refuses `keys generate` and `init` (and, from 1.10.0, `keys add`).
+  Exit codes: `2` usage, `3` 401 or no stored session, `4` 403, `5` 404, `6` 409,
+  `7` 400/422, `8` 5xx, `9` network, `10` 429, `11` a wait that ran out of time (in
+  flight), `130` cancelled. From 1.10.0 a list adds `"page"` beside `"data"`
+  (`page`, `per_page`, `total`, `total_pages`, `has_more`, `next_page`), and help
+  (`rail0 help [command]`, `--help`) answers in the envelope.
 - `--json` — strict JSON output (the result alone, no envelope; also the default when
   piped). `-q/--quiet` — only the result's id (`rail0_id` for a payment,
   `transaction_hash`/`id` otherwise), one per line. `--pretty` — human table/kv view.
@@ -25,7 +30,8 @@ Exact flags and arguments for the commands this skill uses. Run
 
 ## Keys (OS keychain — secrets never leave the machine)
 
-- `rail0 keys` — list saved key names.
+- `rail0 keys` — help for the key commands. Saved keys cannot be listed (a keychain
+  cannot be enumerated): ask about one with `rail0 keys address <name>`.
 - `rail0 keys add <name>` — save a key (hidden prompt; validates + prints the
   derived address).
 - `rail0 keys address <name>` — show the address for a saved key.
