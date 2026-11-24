@@ -99,6 +99,9 @@ from `payments get`'s `.data`), never from assumptions.
      (`unavailable_in_agent_mode`), and a signing command run with no key answers
      `missing_private_key` (exit `2`) at once: it never waits for a key on stdin, so
      do not try to pipe one in.
+   - **Do not ask for the session token.** You never need it: the CLI sends it by
+     itself. `rail0 auth status` tells you who is signed in and until when; from CLI
+     1.10.0 agent mode refuses `rail0 token` and `auth login --token`.
 
 3. **Sessions: signing commands sign in by themselves; reads need one.** Every
    `/payments` call is behind a SIWE session, and a payment is readable only by its

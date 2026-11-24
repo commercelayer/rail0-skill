@@ -14,7 +14,8 @@ name, type, default and meaning.
   per command on stdout, `{"ok":true,"data":…}` or `{"ok":false,"error":{code,
   message,exit_code,http_status,reason,hint,retry_after_s,retryable,in_flight},
   "next_steps":[…]}`; JSON Lines events on stderr; never a prompt. Not combinable with
-  `-q`/`--pretty`; refuses `keys generate` and `init` (and, from 1.10.0, `keys add`).
+  `-q`/`--pretty`; refuses `keys generate` and `init` (and, from 1.10.0, `keys add`,
+  `token` and `auth login --token`: secrets stay out of your context).
   Exit codes: `2` usage, `3` 401 or no stored session, `4` 403, `5` 404, `6` 409,
   `7` 400/422, `8` 5xx, `9` network, `10` 429, `11` a wait that ran out of time (in
   flight), `130` cancelled. From 1.10.0 a list adds `"page"` beside `"data"`
