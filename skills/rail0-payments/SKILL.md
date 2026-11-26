@@ -102,6 +102,14 @@ from `payments get`'s `.data`), never from assumptions.
    - **Do not ask for the session token.** You never need it: the CLI sends it by
      itself. `rail0 auth status` tells you who is signed in and until when; from CLI
      1.10.0 agent mode refuses `rail0 token` and `auth login --token`.
+   - **Do not use `rail0 admin`.** Those are the commands of a gateway *operator*:
+     diagnostics, reads across every account, switching accounts and wallets off, the
+     operator role itself. They are for a person at a terminal. From CLI 1.11.0 agent
+     mode refuses every one of them (`unavailable_in_agent_mode`, exit `2`) before
+     anything is sent, and it never carries an operator's write-mode token, so an
+     operator's write through any other command answers `write_mode_required` (exit
+     `4`). Do not look for a way around either answer: if the task needs an operator's
+     command, say which one and leave it to the person.
 
 3. **Sessions: signing commands sign in by themselves; reads need one.** Every
    `/payments` call is behind a SIWE session, and a payment is readable only by its
